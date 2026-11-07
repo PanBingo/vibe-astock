@@ -127,6 +127,16 @@ function judgeAnchor(entry: AnchorEntry, confirmed: QfqBar[], nearPct: number): 
   return { marks, evidence, counter, sample: after.length, gaps };
 }
 
+/** 最后一根日 K 的日期和取数时间是两件事。超过 3 个自然日没有更近的 K 线就标陈旧，但不猜测是不是停牌。 */
+export function quoteFreshness(lastDate: string | null, asOfDay: string, fetchedAt: string | null): { stale: boolean; note: string } {
+  const fetched = fetchedAt ? `取数时间 ${fetchedAt.slice(0, 16)}` : "没有取数时间";
+  if (!lastDate) return { stale: false, note: `没有日 K。${fetched}，这不是行情日。` };
+  const gap = daysBetween(lastDate, asOfDay);
+  const base = `最后一根日 K 是 ${lastDate}。${fetched}，只说明何时抓到，不是行情日。`;
+  if (gap != null && gap > 3) return { stale: true, note: `${base} 查看日是 ${asOfDay}，相差 ${gap} 天。中间缺的交易日是不是停牌，这次序列看不出来。` };
+  return { stale: false, note: base };
+}
+
 export function analyzeSymbol(entries: AnchorEntry[], quote: QuoteCache | null, asOfDay: string, hm: string): SymbolSummary {
   const sorted = [...entries].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
   const latest = sorted[sorted.length - 1]!;
@@ -144,19 +154,20 @@ export function analyzeSymbol(entries: AnchorEntry[], quote: QuoteCache | null, 
   if (missingLaunch) base.gaps.push("有后续涨停板，但观察池里没有更早的启动日，不用后续板的收盘价代替启动板。");
   const blocked = unsupportedKline(latest.symbol);
   if (blocked) return { ...base, gaps: [...base.gaps, blocked], uncertainty: blocked };
-  if (!quote || quote.gap || !quote.bars.length) {
+  if (!quote || !quote.bars.length) {
     return { ...base, gaps: [...base.gaps, quote?.gap || "行情还没取到"], uncertainty: "行情缺失，不给震仓或出货倾向。" };
   }
   if (quote.adjust !== "qfq") {
-    return { ...base, gaps: [...base.gaps, `行情复权是 ${quote.adjust}，不是前复权`], tendency: "insufficient", tendency_text: "复权口径不对，停止判断。", uncertainty: "口径不一致时不比较价格。" };
+    return { ...base, gaps: [...base.gaps, quote.gap, `行情复权是 ${quote.adjust}，不是前复权`].filter((x): x is string => !!x), tendency: "insufficient", tendency_text: "复权口径不对，停止判断。", uncertainty: "口径不一致时不比较价格。" };
   }
   const { confirmed, unconfirmed } = splitUnconfirmed(quote.bars, asOfDay, hm);
-  const stale = quote.bars.at(-1)?.date != null && daysBetween(quote.bars.at(-1)!.date, asOfDay) != null && daysBetween(quote.bars.at(-1)!.date, asOfDay)! > 10;
+  const fresh = quoteFreshness(quote.bars.at(-1)?.date ?? null, asOfDay, quote.fetched_at);
+  const stale = fresh.stale;
   const judges = launches.map((e) => judgeAnchor(e, confirmed, NEAR_PCT));
   const marks = judges.flatMap((j) => j.marks);
   const evidence = judges.flatMap((j) => j.evidence);
   const counter = judges.flatMap((j) => j.counter);
-  const gaps = [...base.gaps, ...judges.flatMap((j) => j.gaps)];
+  const gaps = [...base.gaps, fresh.note, ...(quote.gap ? [quote.gap] : []), ...judges.flatMap((j) => j.gaps)];
   const sample = Math.max(0, ...judges.map((j) => j.sample), 0);
   if (unconfirmed) gaps.push(`最后一根 ${unconfirmed.date} 还没收盘（高低收都可能变），确认只用它前面的已收盘 K 线。`);
   let tendency: SymbolSummary["tendency"] = "insufficient";

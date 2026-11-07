@@ -8,7 +8,7 @@ import test from "node:test";
 import "../src/finance/register_tasks.ts";
 import type { ServiceContext } from "../src/service.ts";
 import { listViews } from "../src/views.ts";
-import { analyzeSymbol, linkLaunches, refreshPlan, splitUnconfirmed } from "../src/finance/limit_watch/analyze.ts";
+import { analyzeSymbol, linkLaunches, quoteFreshness, refreshPlan, splitUnconfirmed } from "../src/finance/limit_watch/analyze.ts";
 import { snapshotKey } from "../src/snapshot.ts";
 import { acceptPool, clashingDay, enrollDay, enrollGate } from "../src/finance/limit_watch/enroll.ts";
 import { barsFromEnvelope } from "../src/finance/limit_watch/quotes.ts";
@@ -200,6 +200,18 @@ test("历史涨停池：qdate 仍是最新行情日也按请求日入池；晚�
   assert.equal(readPool(ctx).entries.length, 3, "名单撞日不新增");
   assert.equal(clashingDay(readPool(ctx).entries, "2026-11-06", ["002086"]), "2026-11-02");
   fs.rmSync(ctx.dataRoot, { recursive: true, force: true });
+});
+
+test("最后行情日和取数时间分开；早于查看日超过 3 天标陈旧，不写成停牌", () => {
+  const old = quoteFreshness("2026-11-02", "2026-11-07", "2026-11-07T02:00:00.000Z");
+  assert.equal(old.stale, true);
+  assert.match(old.note, /最后一根日 K 是 2026-11-02/);
+  assert.match(old.note, /取数时间 2026-11-07T02:00/);
+  assert.match(old.note, /看不出来/);
+  assert.doesNotMatch(old.note, /因停牌|已停牌/);
+  const friday = quoteFreshness("2026-11-06", "2026-11-07", "2026-11-07T02:00:00.000Z");
+  assert.equal(friday.stale, false);
+  assert.match(friday.note, /不是行情日/);
 });
 
 test("历史锚点用截至最近收盘的截面，不把这当成无前视回测", () => {

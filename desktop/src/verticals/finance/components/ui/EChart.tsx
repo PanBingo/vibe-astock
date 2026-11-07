@@ -46,6 +46,7 @@ export function EChart({ option, height = 300 }: Props) {
     // 配置有误时 ECharts 会同步抛错；在 effect 里不接住会让 React 卸掉整页，只剩一片空白
     try {
       inst.current?.setOption(option, true);
+      inst.current?.resize();
       setFailed(false);
     } catch (e) {
       console.error("图表渲染失败", e);
