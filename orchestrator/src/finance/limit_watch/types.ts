@@ -92,6 +92,32 @@ export interface SymbolSummary {
   gaps: string[];
 }
 
+export type JointStatus = "aligned" | "waiting" | "conflict" | "insufficient";
+
+export interface JointItem {
+  label: string;
+  value: string;
+  at: string;
+  source: string;
+  counter: string;
+  fail: string;
+}
+
+export interface JointLeg {
+  key: "market" | "sector" | "stock";
+  title: string;
+  verdict: string;
+  items: JointItem[];
+}
+
+export interface JointAssessment {
+  status: JointStatus;
+  label: string;
+  session_note: string;
+  legs: JointLeg[];
+  invalidation: string[];
+}
+
 export interface LimitWatchView {
   enabled: boolean;
   disabled_reason: string | null;
@@ -99,8 +125,10 @@ export interface LimitWatchView {
   clock: string;
   near_pct: number;
   rules: string;
-  symbols: SymbolSummary[];
-  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null }) | null;
+  /** 本页打开时附上的联合观察。只读已有快照，不是交易建议。 */
+  joint_note: string;
+  symbols: (SymbolSummary & { joint: JointAssessment })[];
+  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null; joint: JointAssessment }) | null;
   runs: EnrollRun[];
   gaps: string[];
   source: string;

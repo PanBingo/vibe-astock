@@ -2,11 +2,16 @@
 import { ServiceError, type ServiceContext } from "../../service.ts";
 import { ANCHOR_RULE, CLOSE_REFRESH_MAX, MANUAL_REFRESH_MAX, NEAR_PCT, POOL_SOURCE, limitWatchEnabled } from "./config.ts";
 import { analyzeSymbol } from "./analyze.ts";
+import { assessJoint, jointHeadline, loadJointContext } from "./joint.ts";
 import { enrollDay, enrollFromClose } from "./enroll.ts";
 import { refreshQuotes } from "./quotes.ts";
 import { readPool } from "./store.ts";
 import { clockOf } from "../shortline/intraday.ts";
-import type { LimitWatchView, SymbolSummary } from "./types.ts";
+import type { JointAssessment, LimitWatchView, SymbolSummary } from "./types.ts";
+
+function withJoint(rows: SymbolSummary[], joint: ReturnType<typeof loadJointContext>): (SymbolSummary & { joint: JointAssessment })[] {
+  return rows.map((row) => ({ ...row, joint: assessJoint(row, joint) }));
+}
 
 function summaries(ctx: ServiceContext, day: string, hm: string): SymbolSummary[] {
   const pool = readPool(ctx);
@@ -21,13 +26,15 @@ export function limitWatchView(ctx: ServiceContext, query: Record<string, string
   const flag = limitWatchEnabled();
   const clock = clockOf(now);
   const pool = readPool(ctx);
-  const symbols = summaries(ctx, clock.day, clock.hm);
+  const joint = loadJointContext(ctx, clock.day, now);
+  const symbols = withJoint(summaries(ctx, clock.day, clock.hm), joint);
   const symbol = query.symbol ?? "";
   const one = symbol ? symbols.find((s) => s.symbol === symbol) ?? null : null;
   const quote = symbol ? pool.quotes.find((q) => q.symbol === symbol) ?? null : null;
   const gaps = pool.runs.filter((r) => r.outcome !== "enrolled" || r.reason).slice(-8).map((r) => `${r.date} ${r.outcome === "enrolled" ? "已入池" : r.outcome === "skipped" ? "跳过" : "不完整"}：${r.reason ?? `${r.total ?? 0} 只`}`);
   return {
     enabled: flag.enabled, disabled_reason: flag.reason, as_of: clock.day, clock: clock.hms, near_pct: NEAR_PCT, rules: ANCHOR_RULE,
+    joint_note: jointHeadline(joint),
     symbols, detail: one ? { ...one, bars: quote?.bars ?? [], adjust: quote?.adjust ?? null } : null,
     runs: pool.runs.slice(-20), gaps, source: POOL_SOURCE,
   };

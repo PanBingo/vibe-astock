@@ -11,10 +11,15 @@ export interface SymbolSummary {
   tendency_text: string; evidence: string[]; counter: string[]; sample_bars: number; uncertainty: string;
   unconfirmed: boolean; quote_fetched_at: string | null; quote_last_date: string | null; stale: boolean; gaps: string[];
 }
+export type JointStatus = "aligned" | "waiting" | "conflict" | "insufficient";
+export interface JointItem { label: string; value: string; at: string; source: string; counter: string; fail: string }
+export interface JointLeg { key: "market" | "sector" | "stock"; title: string; verdict: string; items: JointItem[] }
+export interface JointAssessment { status: JointStatus; label: string; session_note: string; legs: JointLeg[]; invalidation: string[] }
 export interface LimitWatchView {
   enabled: boolean; disabled_reason: string | null; as_of: string; clock: string; near_pct: number; rules: string;
-  symbols: SymbolSummary[];
-  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null }) | null;
+  joint_note: string;
+  symbols: (SymbolSummary & { joint: JointAssessment })[];
+  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null; joint: JointAssessment }) | null;
   runs: { date: string; at: string; outcome: string; added: number; total: number | null; reason: string | null }[];
   gaps: string[]; source: string; message?: string;
 }

@@ -11,13 +11,15 @@ import { EChart } from "@/components/ui/EChart";
 import { usePalette } from "@/components/ui/chartPalette";
 import { useAiPage } from "../../../core/ai/pageContext";
 import { cn } from "@/lib/utils";
-import type { LimitWatchView, QfqBar, SymbolSummary } from "@/lib/limitWatch";
+import type { JointAssessment, JointStatus, LimitWatchView, QfqBar, SymbolSummary } from "@/lib/limitWatch";
 
 const MARK: Record<string, string> = { near: "接近启动板", broken: "跌破", held: "触及后守住", second_start: "二次启动候选", still_at_board: "仍在涨停价附近" };
 const TEND: Record<SymbolSummary["tendency"], string> = {
   shakeout: "震仓回调倾向", distribution: "出货风险倾向", conflict: "证据相反", insufficient: "样本不足", no_quote: "没有行情",
 };
 export type WatchFilter = "active" | "paused" | "near" | "second";
+export type JointFilter = "all" | JointStatus;
+const JOINT_FILTER: [JointFilter, string][] = [["all", "联合不限"], ["aligned", "联合条件满足"], ["waiting", "等待确认"], ["conflict", "风险或证据冲突"], ["insufficient", "数据不足"]];
 
 function money(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(2);
@@ -60,12 +62,13 @@ export function tipBarIndex(params: unknown, bars: { date: string }[]): number {
   return only === undefined ? -1 : only;
 }
 
-export function filterRows(symbols: SymbolSummary[], filter: WatchFilter): SymbolSummary[] {
+export function filterRows(symbols: (SymbolSummary & { joint?: JointAssessment })[], filter: WatchFilter, joint: JointFilter = "all"): (SymbolSummary & { joint?: JointAssessment })[] {
   return symbols.filter((s) => {
-    if (filter === "active") return s.status === "active";
-    if (filter === "paused") return s.status === "paused";
-    if (filter === "near") return s.marks.some((m) => m.kind === "near" || m.kind === "held");
-    return s.marks.some((m) => m.kind === "second_start");
+    if (filter === "active" && s.status !== "active") return false;
+    if (filter === "paused" && s.status !== "paused") return false;
+    if (filter === "near" && !s.marks.some((m) => m.kind === "near" || m.kind === "held")) return false;
+    if (filter === "second" && !s.marks.some((m) => m.kind === "second_start")) return false;
+    return joint === "all" || s.joint?.status === joint;
   });
 }
 
@@ -139,7 +142,7 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
   v: LimitWatchView;
   message: string | null;
   selected: string | null;
-  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null }) | null;
+  detail: (SymbolSummary & { bars: QfqBar[]; adjust: string | null; joint?: JointAssessment }) | null;
   detailState: "idle" | "loading" | "ready" | "missing";
   onSelect: (symbol: string | null) => void;
   onEnroll: (date: string) => void;
@@ -148,14 +151,15 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
 }) {
   const palette = usePalette();
   const [filter, setFilter] = useState<WatchFilter>("active");
+  const [jointFilter, setJointFilter] = useState<JointFilter>("all");
   const [date, setDate] = useState(v.as_of);
-  const rows = filterRows(v.symbols, filter);
+  const rows = filterRows(v.symbols, filter, jointFilter);
   const shown = detail && detail.symbol === selected ? detail : null;
   const option = useMemo(() => (shown && shown.bars.length ? chartOption(shown.bars, shown, palette.rise, palette.fall, palette.text, palette.axis, palette.grid) : null), [shown, palette]);
   useEffect(() => {
     const next = pickSelection(selected, filterRows(v.symbols, filter));
     if (next !== selected) onSelect(next);
-  }, [filter, v.symbols, selected, onSelect]);
+  }, [filter, jointFilter, v.symbols, selected, onSelect]);
 
   const move = (dir: number) => {
     const i = rows.findIndex((s) => s.symbol === selected);
@@ -175,9 +179,13 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
         <a href="/daily-review" className="text-muted-foreground hover:text-foreground">返回每日复盘</a>
       </div>
       <p role="status" className="text-[13px] text-muted-foreground">{v.as_of} {v.clock} · 池内 {v.symbols.length} 只 · 价格带 ±{(v.near_pct * 100).toFixed(0)}% · 前复权收盘价为锚点。点左侧股票只读这只已存的 K 线，不重新抓全池。{v.disabled_reason ?? ""}{message ? ` ${message}` : ""}</p>
+      <p className="text-[12px] text-muted-foreground">{v.joint_note} 联合状态只排观察优先级，不是买卖建议，也不是胜率。</p>
       <div className="flex flex-wrap gap-2 text-xs">
         {([["active", "跟踪中"], ["paused", "停更"], ["near", "接近启动板"], ["second", "二次启动候选"]] as const).map(([key, label]) => (
           <button key={key} type="button" onClick={() => setFilter(key)} className={cn("rounded-lg border px-2 py-1", filter === key ? "border-primary text-foreground" : "border-border/60 text-muted-foreground")}>{label}</button>
+        ))}
+        {JOINT_FILTER.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => setJointFilter(key)} className={cn("rounded-lg border px-2 py-1", jointFilter === key ? "border-primary text-foreground" : "border-border/60 text-muted-foreground")}>{label}</button>
         ))}
       </div>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
@@ -187,7 +195,7 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
             <button key={s.symbol} type="button" role="option" aria-selected={selected === s.symbol} onClick={() => onSelect(s.symbol)}
               className={cn("mb-1 w-full rounded-lg border px-2 py-1.5 text-left text-[12px]", selected === s.symbol ? "border-primary bg-primary/15 text-foreground" : "border-border/40 text-muted-foreground hover:text-foreground")}>
               <span className="font-medium text-foreground">{s.name}</span> <span className="font-mono">{s.symbol}</span>
-              <span className="mt-0.5 block">行情日 {s.quote_last_date ?? "没有"} · {s.marks.map((m) => MARK[m.kind]).join("、") || TEND[s.tendency]}{s.stale ? " · 行情偏旧" : ""}</span>
+              <span className="mt-0.5 block">行情日 {s.quote_last_date ?? "没有"} · {s.marks.map((m) => MARK[m.kind]).join("、") || TEND[s.tendency]}{s.stale ? " · 行情偏旧" : ""} · {s.joint?.label ?? "数据不足"}</span>
             </button>
           ))}
         </div>
@@ -203,6 +211,24 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
               {shown.evidence.map((e) => <p key={e} className="mt-1 text-[12px]">证据：{e}</p>)}
               {shown.counter.map((e) => <p key={e} className="mt-1 text-[12px]">反证：{e}</p>)}
               {shown.marks.map((m) => <p key={`${m.kind}-${m.anchor_date}`} className="mt-1 text-[12px]">{MARK[m.kind]} · 锚点 {m.anchor_date} 前复权收盘 {money(m.anchor_close)}，带 {money(m.band_low)}–{money(m.band_high)}。{m.text}</p>)}
+              {shown.joint ? (
+                <div className="mt-2 space-y-2 rounded-lg border border-border/50 p-2 text-[12px]">
+                  <p className="font-medium">{shown.joint.label}</p>
+                  <p className="text-muted-foreground">{shown.joint.session_note}</p>
+                  {shown.joint.legs.map((leg) => (
+                    <div key={leg.key}>
+                      <p className="font-medium">{leg.title} · {leg.verdict}</p>
+                      {leg.items.map((item) => (
+                        <p key={`${leg.key}-${item.label}`} className="text-muted-foreground">
+                          {item.label}：{item.value}（{item.at} · {item.source}）
+                          {item.counter ? ` 反证：${item.counter}` : ""}{item.fail ? ` ${item.fail}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                  {shown.joint.invalidation.map((line) => <p key={line} className="text-muted-foreground">{line}</p>)}
+                </div>
+              ) : null}
               {shown.gaps.map((g) => <p key={g} role="status" className="mt-1 text-[12px] text-warning">{g}</p>)}
               {option ? <EChart option={option} height={460} /> : <p role="status" className="mt-3 text-[13px] text-muted-foreground">这只没有可画的前复权 K 线。{shown.gaps.find((g) => g.includes("没") || g.includes("限流") || g.includes("不支持") || g.includes("失败")) ?? shown.gaps[0] ?? "没有返回日 K。"}</p>}
             </>
@@ -218,7 +244,8 @@ export function LimitWatchBody({ v, message, selected, detail, detailState, onSe
 
 export function limitWatchSummary(v: LimitWatchView): string {
   const near = v.symbols.filter((s) => s.marks.some((m) => m.kind === "near"));
-  return [`涨停观察池 ${v.as_of}，${v.symbols.length} 只。锚点是涨停日前复权收盘价。`, near.length ? `接近启动板：${near.map((s) => `${s.name}(${s.symbol})`).join("、")}` : "没有接近启动板的标记。", "二次启动只是观察候选，不是买卖建议。没有资金流结论。"].join("\n");
+  const counts = ["aligned", "waiting", "conflict", "insufficient"].map((k) => `${k === "aligned" ? "满足" : k === "waiting" ? "等待" : k === "conflict" ? "冲突" : "不足"} ${v.symbols.filter((s) => s.joint?.status === k).length}`).join("，");
+  return [`涨停观察池 ${v.as_of}，${v.symbols.length} 只。锚点是涨停日前复权收盘价。`, `联合观察（不是买卖建议，也不是胜率）：${counts}。`, near.length ? `接近启动板：${near.map((s) => `${s.name}(${s.symbol})`).join("、")}` : "没有接近启动板的标记。", "二次启动只是观察候选，不是买卖建议。"].join("\n");
 }
 
 export function LimitWatch() {

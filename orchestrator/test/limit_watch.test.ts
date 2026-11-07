@@ -15,6 +15,9 @@ import { barsFromEnvelope } from "../src/finance/limit_watch/quotes.ts";
 import { mergeEntries, readPool, resetPoolChain } from "../src/finance/limit_watch/store.ts";
 import type { AnchorEntry, QfqBar, QuoteCache } from "../src/finance/limit_watch/types.ts";
 import { limitWatchView } from "../src/finance/limit_watch/view.ts";
+import { assessJoint, type JointContext } from "../src/finance/limit_watch/joint.ts";
+import type { CaptureSnapshot } from "../src/finance/live_insight/types.ts";
+import type { SymbolSummary } from "../src/finance/limit_watch/types.ts";
 
 const DAY = "2026-10-13";
 const signal = new AbortController().signal;
@@ -228,4 +231,118 @@ test("历史锚点用截至最近收盘的截面，不把这当成无前视回�
   assert.equal(view.marks.find((m) => m.kind === "near")?.anchor_close, 10);
   assert.equal("win_rate" in view, false);
   assert.match(view.uncertainty, /不推断主力意图/);
+});
+
+function board(name: string, net: number, pct: number, source: "eastmoney" | "sina" = "eastmoney") {
+  return { code: source === "sina" ? "S1" : "BK001", name, rank: 1, main_net: net, main_pct: null, change_pct: pct, up_count: 3, down_count: 1, leader: null };
+}
+function snap(at: string, clock: string, over: Partial<CaptureSnapshot> = {}): CaptureSnapshot {
+  return {
+    schema: 1, date: "2026-11-06", captured_at: at, clock, phase: "morning", trading_day: true,
+    board_source: "eastmoney", board_caliber: "东财主力净额", industry: [board("测试行业", 2e8, 1)], concept: [],
+    breadth: { date: "2026-11-06", exchanges: [{ market: "SH", label: "沪", up: 3200, down: 1100, flat: 80, amount: null }], buckets: [], fetched_at: at },
+    indexes: [], limit_ups: [], limit_up_date: "2026-11-06", flows: [], leader_concepts: [],
+    live: { as_of: "2026-11-06", phase: "morning", limit_up: 48, broken: 8, limit_down: 2, highest_board: 4, seal_rate: null, broken_rate: 0.14 },
+    live_reason: null, gaps: [], ...over,
+  };
+}
+function summary(over: Partial<SymbolSummary> = {}): SymbolSummary {
+  return {
+    symbol: "600001", name: "测试甲", industry: "测试行业", status: "active", entries: 1, latest_entry: "2026-10-19",
+    launch_dates: ["2026-10-19"], missing_launch: false,
+    marks: [{ kind: "held", anchor_date: "2026-10-19", anchor_close: 10, band_low: 9.7, band_high: 10.3, distance_pct: 0.01, text: "夹具" }],
+    tendency: "shakeout", tendency_text: "夹具回踩倾向，不是生产结论。", evidence: ["缩量守住。"], counter: [], sample_bars: 4,
+    uncertainty: "夹具。", unconfirmed: false, quote_fetched_at: "2026-11-06T08:00:00.000Z", quote_last_date: "2026-11-06", stale: false, gaps: [],
+    ...over,
+  };
+}
+function ctx(over: Partial<JointContext> = {}): JointContext {
+  const snaps = [
+    snap("2026-11-06T02:00:00.000Z", "10:00:00", { industry: [board("测试行业", 2e8, 1)] }),
+    snap("2026-11-06T02:12:00.000Z", "10:12:00", { industry: [board("测试行业", 4e8, 1.6)] }),
+  ];
+  return {
+    as_of: "2026-11-06", clock: "18:00:00", session: "closed", snapshot_date: "2026-11-06", historical: false,
+    stale: false, stale_text: null, snaps, emotion: null, emotion_note: null, ...over,
+  };
+}
+const textOf = (row: ReturnType<typeof assessJoint>) => JSON.stringify(row);
+
+test("联合观察只解释三项，不打分，也不把缺失说成已确认", () => {
+  const aligned = assessJoint(summary(), ctx());
+  assert.equal(aligned.status, "aligned");
+  assert.match(textOf(aligned), /市场环境/);
+  assert.match(textOf(aligned), /板块持续性/);
+  assert.match(textOf(aligned), /个股回踩/);
+  assert.doesNotMatch(textOf(aligned), /胜率|建议买入/);
+
+  const weak = assessJoint(summary(), ctx({
+    snaps: [
+      snap("2026-11-06T02:00:00.000Z", "10:00:00", { breadth: { date: "2026-11-06", exchanges: [{ market: "SH", label: "沪", up: 900, down: 2800, flat: 10, amount: null }], buckets: [], fetched_at: "2026-11-06T02:00:00.000Z" } }),
+      snap("2026-11-06T02:12:00.000Z", "10:12:00", { breadth: { date: "2026-11-06", exchanges: [{ market: "SH", label: "沪", up: 900, down: 2800, flat: 10, amount: null }], buckets: [], fetched_at: "2026-11-06T02:12:00.000Z" } }),
+    ],
+  }));
+  assert.equal(weak.status, "conflict");
+  assert.match(textOf(weak), /市场偏弱/);
+
+  const ebb = assessJoint(summary(), ctx({
+    snaps: [
+      snap("2026-11-06T02:00:00.000Z", "10:00:00", { industry: [board("测试行业", 5e8, 2)] }),
+      snap("2026-11-06T02:12:00.000Z", "10:12:00", { industry: [board("测试行业", 3e8, 0.4)] }),
+    ],
+  }));
+  assert.equal(ebb.status, "conflict");
+  assert.match(textOf(ebb), /板块退潮|退潮/);
+
+  const opposed = assessJoint(summary({ tendency: "conflict", tendency_text: "证据相反。", counter: ["放量跌破。"] }), ctx());
+  assert.equal(opposed.status, "conflict");
+  assert.match(textOf(opposed), /反证|抵消/);
+
+  const stale = assessJoint(summary({ stale: true, quote_last_date: "2026-11-02" }), ctx());
+  assert.equal(stale.status, "insufficient");
+  const cross = assessJoint(summary(), ctx({ session: "live", as_of: "2026-11-07", snapshot_date: "2026-11-06" }));
+  assert.equal(cross.status, "insufficient");
+  assert.match(textOf(cross), /不是查看日/);
+
+  const single = assessJoint(summary(), ctx({ snaps: [snap("2026-11-06T02:00:00.000Z", "10:00:00")] }));
+  assert.equal(single.status, "insufficient");
+  assert.match(textOf(single), /只有一张快照/);
+
+  const unmapped = assessJoint(summary({ industry: "没有这个行业" }), ctx());
+  assert.equal(unmapped.status, "insufficient");
+  assert.match(textOf(unmapped), /不按名字去猜|映射缺失|没有这只代码的概念归属/);
+
+  const mixed = assessJoint(summary(), ctx({
+    snaps: [
+      snap("2026-11-06T02:00:00.000Z", "10:00:00"),
+      snap("2026-11-06T02:12:00.000Z", "10:12:00", { board_source: "sina", board_caliber: "新浪流入减流出", industry: [board("测试行业", 4e8, 1.6, "sina")] }),
+    ],
+  }));
+  assert.equal(mixed.status, "insufficient");
+  assert.match(textOf(mixed), /不能接成一条曲线/);
+
+  const holiday = assessJoint(summary(), ctx({ session: "holiday", historical: true, as_of: "2026-11-07" }));
+  assert.equal(holiday.status, "waiting");
+  assert.match(holiday.session_note, /不是当前实时/);
+  assert.notEqual(holiday.status, "aligned");
+
+  const openBar = assessJoint(summary({ unconfirmed: true }), ctx({ session: "closed" }));
+  assert.equal(openBar.status, "waiting");
+  assert.match(textOf(openBar), /未收盘/);
+
+  const dropped = assessJoint(summary(), ctx({
+    snaps: [
+      snap("2026-11-06T02:00:00.000Z", "10:00:00", { industry: [board("测试行业", 2e8, 1)] }),
+      snap("2026-11-06T02:12:00.000Z", "10:12:00", { industry: [] }),
+    ],
+  }));
+  assert.equal(dropped.status, "insufficient");
+  assert.match(textOf(dropped), /不当成净额归零或流出/);
+
+  const root = tmp();
+  const page = limitWatchView(root, {}, signal, sh("12:00", "2026-11-07"));
+  assert.match(page.joint_note, /休市/);
+  assert.equal(fs.existsSync(path.join(root.dataRoot, "limit-watch", "pool.json")), false);
+  assert.equal(fs.existsSync(path.join(root.dataRoot, "live-insight")), false);
+  fs.rmSync(root.dataRoot, { recursive: true, force: true });
 });
