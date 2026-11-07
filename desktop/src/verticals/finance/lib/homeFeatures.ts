@@ -11,6 +11,7 @@ export const HOME_FEATURE_GROUPS = [
   { title: "复盘", detail: "收盘后回头看今天", features: [
     { to: "/shortline", title: "情绪复盘", detail: "赚钱效应、晋级率、亏钱效应与题材延续" },
     { to: "/daily-review", title: "每日复盘", detail: "盘面表现、资金、连板与涨停分档" },
+    { to: "/limit-watch", title: "涨停观察池", detail: "收盘后自动记下当天涨停，回看前复权 K 线和回踩启动板的线索" },
   ] },
   { title: "交易日志", detail: "自己的单子对上当时的情绪", features: [
     { to: "/journal", title: "交易日志", detail: "按情绪环境、板位、打法分组看自己的胜率，在险资金、纪律与模式卡" },

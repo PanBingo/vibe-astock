@@ -46,6 +46,7 @@ export const NAV_SECTIONS: NavSection[] = [
   { label: "复盘", icon: "Flame", pages: [
     { to: "/shortline", label: "情绪复盘", icon: "Flame" },
     { to: "/daily-review", label: "每日复盘", icon: "Activity" },
+    { to: "/limit-watch", label: "涨停观察池", icon: "Radar" },
   ] },
   { label: "交易日志", icon: "BookOpenCheck", pages: [{ to: "/journal", label: "交易日志", icon: "BookOpenCheck" }] },
   { label: "产业资讯", icon: "Radar", pages: [
