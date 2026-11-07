@@ -54,11 +54,92 @@ test("左侧选中高亮，右侧只画当前股票；没有 K 线不留上一�
     assert.equal(acceptDetail("600002", "600001", "600002"), false);
     assert.equal(acceptDetail("600001", "600001", "600001"), true);
     const opt = chartOption([{ date: "2026-11-06", open: 10, high: 11, low: 9, close: 10.5, volume: 20 }], v.symbols[0], "#f00", "#0f0", "#999", "#333", "#222");
-    assert.match(opt.tooltip.formatter([{ dataIndex: 0 }]), /2026-11-06/);
-    assert.match(opt.tooltip.formatter([{ dataIndex: 0 }]), /10\.50/);
-    assert.match(opt.tooltip.formatter([{ dataIndex: 0 }]), /成交量/);
+    const firstTip = opt.tooltip.formatter([{ dataIndex: 0 }]);
+    assert.match(firstTip, /2026-11-06/);
+    assert.match(firstTip, /10\.50/);
+    assert.match(firstTip, /成交量/);
+    assert.match(firstTip, /涨跌幅/);
+    assert.match(firstTip, /暂无/);
+    assert.doesNotMatch(firstTip, /0\.00%/);
     const blank = textOf(r.html(LimitWatchBody, { v: { ...v, symbols: [] }, message: null, selected: null, detail: null, detailState: "idle", onSelect: noop, onEnroll: noop, onRefresh: noop, busy: false }));
     assert.match(blank, /观察池还是空的/);
     assert.doesNotMatch(blank, /测试甲|10\.10/);
+  });
+});
+
+test("涨跌幅用前一交易日收盘；无前收、非法值和缩放首根都不写成 0%", async () => {
+  await withRenderer(async (r) => {
+    const mod = await r.load("/src/verticals/finance/pages/LimitWatch.tsx");
+    const { barChange, changeAt, tipBarIndex, chartOption } = mod;
+    const up = barChange(10, 10.5);
+    const down = barChange(10, 9);
+    const flat = barChange(10, 10);
+    assert.equal(up.text, "+5.00%");
+    assert.equal(up.tone, "up");
+    assert.equal(down.text, "-10.00%");
+    assert.equal(down.tone, "down");
+    assert.equal(flat.text, "0.00%");
+    assert.equal(flat.tone, "flat");
+    assert.equal(barChange(null, 10).text, "暂无");
+    assert.equal(barChange(0, 10).text, "暂无");
+    assert.equal(barChange(-1, 10).text, "暂无");
+    assert.equal(barChange(Number.NaN, 10).text, "暂无");
+    assert.equal(barChange(Number.POSITIVE_INFINITY, 10).text, "暂无");
+    assert.equal(barChange(10, Number.NaN).text, "暂无");
+    assert.equal(barChange(10, Number.POSITIVE_INFINITY).text, "暂无");
+    for (const bad of [barChange(null, 10), barChange(0, 10), barChange(10, Number.NaN)]) assert.doesNotMatch(bad.text, /0%/);
+
+    const bars = [
+      { date: "2026-10-23", open: 10, high: 10.2, low: 9.8, close: 10, volume: 100 },
+      { date: "2026-10-26", open: 10.2, high: 11.2, low: 10.1, close: 11, volume: 200 },
+      { date: "2026-10-27", open: 11, high: 11, low: 10.4, close: 10.45, volume: 180 },
+      { date: "2026-10-28", open: 10.45, high: 10.6, low: 10.4, close: 10.5, volume: 160 },
+      { date: "2026-10-29", open: 10.5, high: 10.8, low: 10.4, close: 10.71, volume: 150 },
+      { date: "2026-10-30", open: 10.71, high: 10.9, low: 10.6, close: 10.71, volume: 140 },
+    ];
+    assert.equal(changeAt(bars, 0).text, "暂无");
+    assert.equal(changeAt(bars, 1).text, "+10.00%");
+    assert.equal(changeAt(bars, 2).text, "-5.00%");
+    const summary = {
+      symbol: "600001", name: "测试甲", industry: "测试", status: "active", entries: 1, latest_entry: "2026-10-23",
+      launch_dates: ["2026-10-23"], missing_launch: false,
+      marks: [{ kind: "held", anchor_date: "2026-10-23", anchor_close: 10, band_low: 9.7, band_high: 10.3, distance_pct: 0, text: "夹具锚点。" }],
+      tendency: "insufficient", tendency_text: "夹具。", evidence: [], counter: [], sample_bars: 6,
+      uncertainty: "夹具，不是生产行情。", unconfirmed: false, quote_fetched_at: "2026-11-07T02:00:00.000Z",
+      quote_last_date: "2026-10-30", stale: true, gaps: [],
+    };
+    const opt = chartOption(bars, summary, "#ff0000", "#00aa00", "#888888", "#333", "#222");
+    const monday = opt.tooltip.formatter([{ dataIndex: 1, axisValue: "2026-10-26", seriesName: "成交量" }]);
+    assert.match(monday, /2026-10-26/);
+    assert.match(monday, /\+10\.00%/);
+    assert.match(monday, /color:#ff0000/);
+    assert.match(monday, /成交量/);
+    assert.doesNotMatch(monday, /2026-10-23|2026-10-27|暂无/);
+    const anchor = opt.tooltip.formatter([{ dataIndex: 0, axisValue: "2026-10-23", seriesName: "前复权" }]);
+    assert.match(anchor, /触及后守住/);
+    assert.match(anchor, /暂无/);
+    assert.doesNotMatch(anchor, /\+10\.00%/);
+    const zoomFirst = opt.tooltip.formatter([{ dataIndex: 4 }]);
+    assert.match(zoomFirst, /2026-10-29/);
+    assert.match(zoomFirst, /\+2\.00%/);
+    assert.doesNotMatch(zoomFirst, /暂无/);
+    assert.equal(tipBarIndex([{ dataIndex: 0, axisValue: "2026-10-30", seriesName: "成交量" }], bars), 5);
+    assert.equal(tipBarIndex([{ seriesName: "成交量", dataIndex: 2, axisValue: "2026-10-27" }, { seriesName: "前复权", dataIndex: 2, axisValue: "2026-10-27" }], bars), 2);
+    assert.equal(tipBarIndex([{ dataIndex: 1, axisValue: "2026-10-26" }, { dataIndex: 4, axisValue: "2026-10-29" }], bars), -1);
+
+    const other = chartOption(bars.map((b, i) => ({ ...b, close: i === 0 ? 20 : 10 })), { ...summary, symbol: "600009", name: "测试丙" }, "#ff0000", "#00aa00", "#888888", "#333", "#222");
+    const foreign = other.tooltip.formatter([{ dataIndex: 1, axisValue: "2026-10-26" }]);
+    assert.match(foreign, /-50\.00%/);
+    assert.doesNotMatch(foreign, /\+10\.00%/);
+
+    const live = chartOption(bars, { ...summary, unconfirmed: true }, "#ff0000", "#00aa00", "#888888", "#333", "#222");
+    const last = live.tooltip.formatter([{ dataIndex: bars.length - 1, axisValue: "2026-10-30", seriesName: "成交量" }]);
+    assert.match(last, /未收盘，暂估/);
+    assert.match(last, /0\.00%（暂估）/);
+    assert.match(last, /color:#888888/);
+    assert.doesNotMatch(last, /color:#ff0000|color:#00aa00/);
+    const earlier = live.tooltip.formatter([{ dataIndex: 2, axisValue: "2026-10-27" }]);
+    assert.match(earlier, /-5\.00%/);
+    assert.doesNotMatch(earlier, /暂估/);
   });
 });

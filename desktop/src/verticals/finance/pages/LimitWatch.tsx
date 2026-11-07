@@ -23,6 +23,43 @@ function money(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(2);
 }
 
+export type ChangeTone = "up" | "down" | "flat" | "missing";
+
+/**
+ * 一根 K 线的涨跌幅：当根收盘相对同一条前复权序列里前一根的收盘。
+ * 前一根就是上一个实际交易日，中间隔了周末或节假日也用它，不看开盘价。
+ * 整段第一根、前收不是有限正数、当根收盘不是有限数，都是「暂无」，不写成 0%。
+ */
+export function barChange(prevClose: number | null | undefined, close: number | null | undefined): { text: string; tone: ChangeTone } {
+  if (typeof close !== "number" || !Number.isFinite(close)) return { text: "暂无", tone: "missing" };
+  if (typeof prevClose !== "number" || !Number.isFinite(prevClose) || prevClose <= 0) return { text: "暂无", tone: "missing" };
+  const pct = ((close - prevClose) / prevClose) * 100;
+  if (!Number.isFinite(pct)) return { text: "暂无", tone: "missing" };
+  const digits = pct.toFixed(2);
+  const shown = Number(digits);
+  if (shown === 0) return { text: "0.00%", tone: "flat" };
+  return { text: `${shown > 0 ? "+" : ""}${digits}%`, tone: shown > 0 ? "up" : "down" };
+}
+
+/** 下标对应完整已获取序列。缩放只改可见窗口，不把第一根可见柱当成没有前收。 */
+export function changeAt(bars: QfqBar[], index: number): { text: string; tone: ChangeTone } {
+  if (index <= 0 || index >= bars.length) return barChange(null, bars[index]?.close);
+  return barChange(bars[index - 1]?.close, bars[index]?.close);
+}
+
+/** 轴触发时按日期对上完整序列；日期对不上就退回双方一致的 dataIndex，避免成交量轴串到别的日子。 */
+export function tipBarIndex(params: unknown, bars: { date: string }[]): number {
+  const list = (Array.isArray(params) ? params : [params]).filter((p): p is Record<string, unknown> => !!p && typeof p === "object");
+  const dates = [...new Set(list.flatMap((p) => {
+    const v = p.axisValue ?? p.axisValueLabel ?? p.name;
+    return typeof v === "string" && bars.some((b) => b.date === v) ? [v] : [];
+  }))];
+  if (dates.length === 1) return bars.findIndex((b) => b.date === dates[0]);
+  const indexes = [...new Set(list.map((p) => p.dataIndex).filter((i): i is number => typeof i === "number" && i >= 0 && i < bars.length))];
+  const only = indexes.length === 1 ? indexes[0] : undefined;
+  return only === undefined ? -1 : only;
+}
+
 export function filterRows(symbols: SymbolSummary[], filter: WatchFilter): SymbolSummary[] {
   return symbols.filter((s) => {
     if (filter === "active") return s.status === "active";
@@ -61,15 +98,17 @@ export function chartOption(bars: QfqBar[], summary: SymbolSummary, rise: string
     lineStyle: { color: rise, width: 1.5 },
   } : undefined;
   const tip = (params: unknown) => {
-    const list = Array.isArray(params) ? params : [params];
-    const first = list[0] as { dataIndex?: number } | undefined;
-    const i = first?.dataIndex ?? -1;
+    const i = tipBarIndex(params, bars);
     const b = bars[i];
     if (!b) return "";
     const mark = summary.marks.filter((m) => m.anchor_date === b.date).map((m) => MARK[m.kind] ?? m.kind).join("、");
-    const row = (k: string, val: string) => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${k}</span><b>${val}</b></div>`;
-    return [`<div style="font-weight:600">${b.date}${mark ? ` · ${mark}` : ""}</div>`,
+    const ch = changeAt(bars, i);
+    const provisional = summary.unconfirmed && i === bars.length - 1;
+    const color = ch.tone === "up" ? rise : ch.tone === "down" ? fall : text;
+    const row = (k: string, val: string, paint?: string) => `<div style="display:flex;justify-content:space-between;gap:16px"><span>${k}</span><b${paint ? ` style="color:${paint}"` : ""}>${val}</b></div>`;
+    return [`<div style="font-weight:600">${b.date}${mark ? ` · ${mark}` : ""}${provisional ? " · 未收盘，暂估" : ""}</div>`,
       row("开", money(b.open)), row("高", money(b.high)), row("低", money(b.low)), row("收", money(b.close)),
+      row("涨跌幅", provisional ? `${ch.text}（暂估）` : ch.text, color),
       row("成交量", b.volume == null ? "没有" : String(b.volume))].join("");
   };
   return {
