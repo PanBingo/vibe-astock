@@ -1,6 +1,9 @@
 /**
  * 把某一个已经收盘的交易日的完整涨停池写入观察池。
- * 读页面不调用这里。空池、行情日对不上、没收盘，都不写股票。
+ * 读页面不调用这里。空池、请求日晚于上游行情日、名单和另一天完全相同，都不写股票。
+ *
+ * 东财历史日期的 data.qdate 仍是最新行情日（源码和 2026-11-07 实测都如此），
+ * 不能用 qdate 等于请求日来核对历史场次。请求日晚于 qdate 才是「这一天还没有池子」。
  */
 import { fetchEndpoint, type ServiceContext } from "../../service.ts";
 import { readRawDoc } from "../candidates.ts";
@@ -8,7 +11,7 @@ import { failedNote } from "../schedule.ts";
 import { sealTime } from "../review_tiers.ts";
 import { clockOf } from "../shortline/intraday.ts";
 import { SETTLED_HM, limitWatchEnabled } from "./config.ts";
-import { mergeEntries, rememberRun, updatePool } from "./store.ts";
+import { mergeEntries, readPool, rememberRun, updatePool } from "./store.ts";
 import type { PoolStock } from "./types.ts";
 
 export interface FetchLike {
@@ -20,10 +23,11 @@ export function acceptPool(doc: unknown, date: string): { ok: true; stocks: Pool
   if (!data || typeof data !== "object") return { ok: false, reason: "涨停池原始数据不是东财的 data 对象" };
   const qdate = String((data as { qdate?: unknown }).qdate ?? "");
   const want = date.replace(/-/g, "");
-  if (!/^\d{8}$/.test(qdate) || qdate !== want) return { ok: false, reason: `涨停池行情日是 ${qdate || "空"}，不是 ${want}，不把别的日子写进来` };
+  if (!/^\d{8}$/.test(qdate)) return { ok: false, reason: "涨停池没有行情日 qdate，不能判断请求日是不是还没到" };
+  if (want > qdate) return { ok: false, reason: `请求日 ${want} 晚于上游最新行情日 ${qdate}，这一天还没有涨停池，不把更早的池子写进来` };
   const pool = (data as { pool?: unknown }).pool;
   if (!Array.isArray(pool)) return { ok: false, reason: "涨停池不是列表，不能当成完整名单" };
-  if (!pool.length) return { ok: false, reason: "涨停池是空的。空响应不当成当日完整的 0 只，也不入池" };
+  if (!pool.length) return { ok: false, reason: `涨停池是空的。东财对超出保留期的交易日会回空列表，qdate 仍是最新行情日 ${qdate}。空列表不当成完整的 0 只，也不入池` };
   const stocks: PoolStock[] = [];
   const seen = new Set<string>();
   for (const row of pool) {
@@ -41,6 +45,18 @@ export function acceptPool(doc: unknown, date: string): { ok: true; stocks: Pool
   }
   if (!stocks.length) return { ok: false, reason: "涨停池里没有可用的 6 位代码，不入池" };
   return { ok: true, stocks, qdate: `${qdate.slice(0, 4)}-${qdate.slice(4, 6)}-${qdate.slice(6)}` };
+}
+
+/** 另一天已经入池的名单如果和这次完全一样，日期参数多半被忽略了，不能再写一天。 */
+export function clashingDay(entries: { trade_date: string; symbol: string }[], date: string, symbols: string[]): string | null {
+  const incoming = [...symbols].sort().join(",");
+  const by = new Map<string, string[]>();
+  for (const e of entries) {
+    if (e.trade_date === date) continue;
+    by.set(e.trade_date, [...(by.get(e.trade_date) ?? []), e.symbol]);
+  }
+  for (const [day, list] of by) if ([...list].sort().join(",") === incoming) return day;
+  return null;
 }
 
 export function enrollGate(date: string, today: string, hm: string): string | null {
@@ -86,10 +102,17 @@ export async function enrollDay(ctx: ServiceContext, date: string, deps: { now: 
     await updatePool(ctx, (pool) => { pool.runs.push({ date, at: now.toISOString(), outcome: "incomplete", added: 0, total: null, reason: accepted.reason }); pool.runs = pool.runs.slice(-200); });
     return { outcome: "incomplete", added: 0, total: null, message: accepted.reason };
   }
+  const clash = clashingDay(readPool(ctx).entries, date, accepted.stocks.map((s) => s.symbol));
+  if (clash) {
+    const reason = `${date} 的涨停代码和已入池的 ${clash} 完全相同。两个交易日名单一样时不把同一份池子再写一天`;
+    await updatePool(ctx, (pool) => { pool.runs.push({ date, at: now.toISOString(), outcome: "incomplete", added: 0, total: accepted.stocks.length, reason }); pool.runs = pool.runs.slice(-200); });
+    return { outcome: "incomplete", added: 0, total: accepted.stocks.length, message: reason };
+  }
   const saved = await updatePool(ctx, (pool) => {
     const merged = mergeEntries(pool.entries, date, accepted.stocks, accepted.qdate, now.toISOString());
     pool.entries = merged.entries;
-    const run = { date, at: now.toISOString(), outcome: "enrolled" as const, added: merged.added, total: accepted.stocks.length, reason: merged.added ? null : "这一天的股票已经在池里，没有新增，也没有删除旧记录" };
+    const hist = accepted.qdate !== date ? `上游 qdate 是 ${accepted.qdate}（历史日期仍回最新行情日），名单按请求日 ${date} 写入` : null;
+    const run = { date, at: now.toISOString(), outcome: "enrolled" as const, added: merged.added, total: accepted.stocks.length, reason: merged.added ? hist : [hist, "这一天的股票已经在池里，没有新增，也没有删除旧记录"].filter(Boolean).join("；") };
     rememberRun(pool, run);
     return merged;
   });

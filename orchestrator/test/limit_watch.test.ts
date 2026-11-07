@@ -9,7 +9,8 @@ import "../src/finance/register_tasks.ts";
 import type { ServiceContext } from "../src/service.ts";
 import { listViews } from "../src/views.ts";
 import { analyzeSymbol, linkLaunches, refreshPlan, splitUnconfirmed } from "../src/finance/limit_watch/analyze.ts";
-import { acceptPool, enrollDay, enrollGate } from "../src/finance/limit_watch/enroll.ts";
+import { snapshotKey } from "../src/snapshot.ts";
+import { acceptPool, clashingDay, enrollDay, enrollGate } from "../src/finance/limit_watch/enroll.ts";
 import { barsFromEnvelope } from "../src/finance/limit_watch/quotes.ts";
 import { mergeEntries, readPool, resetPoolChain } from "../src/finance/limit_watch/store.ts";
 import type { AnchorEntry, QfqBar, QuoteCache } from "../src/finance/limit_watch/types.ts";
@@ -153,4 +154,66 @@ test("自动更新只覆盖跟踪中且过期的有限名单，读页面不写�
   const mixed = barsFromEnvelope({ status: "ok", extra: { adjust: "qfq" } }, { rows: [{ date: "2026-10-01", open: 1, high: 1, low: 1, close: 1, volume: 1, adjust: "none" }] });
   assert.equal(mixed.ok, false);
   fs.rmSync(ctx.dataRoot, { recursive: true, force: true });
+});
+
+test("历史涨停池：qdate 仍是最新行情日也按请求日入池；晚于 qdate、空池、名单撞日都不写；后补启动板能接上", async () => {
+  const hist = acceptPool({ data: { qdate: "20261106", pool: [{ c: "002086", n: "东方海洋", lbc: 1 }, { c: "600000", n: "甲", lbc: 2 }] } }, "2026-10-19");
+  assert.equal(hist.ok, true);
+  if (hist.ok) {
+    assert.equal(hist.stocks.length, 2);
+    assert.equal(hist.qdate, "2026-11-06");
+  }
+  const future = acceptPool({ data: { qdate: "20261106", pool: [{ c: "600000", n: "甲", lbc: 1 }] } }, "2026-11-07");
+  assert.equal(future.ok, false);
+  assert.match(future.ok ? "" : future.reason, /晚于上游最新行情日/);
+  const empty = acceptPool({ data: { qdate: "20261106", pool: [] } }, "2026-10-13");
+  assert.equal(empty.ok, false);
+  assert.match(empty.ok ? "" : empty.reason, /空的/);
+  assert.notEqual(snapshotKey("em_zt_pool", "MARKET", { date: "20261019" }), snapshotKey("em_zt_pool", "MARKET", { date: "20261106" }));
+  const ctx = tmp();
+  resetPoolChain();
+  const docs = new Map<string, unknown>([
+    ["20261102", { data: { qdate: "20261106", pool: [{ c: "002086", n: "东方海洋", lbc: 3, hybk: "农业", fbt: 93200 }] } }],
+    ["20261019", { data: { qdate: "20261106", pool: [{ c: "002086", n: "东方海洋", lbc: 1, hybk: "农业", fbt: 93100 }, { c: "600001", n: "乙", lbc: 1, hybk: "银行", fbt: 100000 }] } }],
+    ["20261106", { data: { qdate: "20261106", pool: [{ c: "002086", n: "东方海洋", lbc: 3, hybk: "农业", fbt: 93200 }] } }],
+  ]);
+  fs.mkdirSync(path.join(ctx.dataRoot, "raw"), { recursive: true });
+  const fetch = async (_c: unknown, req: { args?: { date?: string } }) => {
+    const key = req.args?.date ?? "";
+    fs.writeFileSync(path.join(ctx.dataRoot, "raw", "pool.json"), JSON.stringify(docs.get(key)));
+    return { envelope: { status: "ok", evidence: [{ raw_ref: "raw/pool.json" }] }, out_dir: ctx.dataRoot };
+  };
+  const later = await enrollDay(ctx, "2026-11-02", { now: sh("16:00", "2026-11-07"), signal, fetch: fetch as never });
+  assert.equal(later.added, 1);
+  assert.equal(readPool(ctx).entries[0]?.launch_date, null, "先入的 3 板还没有启动日");
+  const firstAt = readPool(ctx).entries[0]?.enrolled_at;
+  const earlier = await enrollDay(ctx, "2026-10-19", { now: sh("16:10", "2026-11-07"), signal, fetch: fetch as never });
+  assert.equal(earlier.added, 2);
+  const rows = readPool(ctx).entries.filter((e) => e.symbol === "002086").sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+  assert.deepEqual(rows.map((e) => e.trade_date), ["2026-10-19", "2026-11-02"]);
+  assert.equal(rows[1]?.launch_date, "2026-10-19");
+  assert.equal(rows[1]?.enrolled_at, firstAt, "补启动日不改第一次入池时间");
+  assert.equal(readPool(ctx).entries.length, 3);
+  const clash = await enrollDay(ctx, "2026-11-06", { now: sh("16:20", "2026-11-07"), signal, fetch: fetch as never });
+  assert.equal(clash.outcome, "incomplete");
+  assert.match(clash.message, /2026-11-02/);
+  assert.equal(readPool(ctx).entries.length, 3, "名单撞日不新增");
+  assert.equal(clashingDay(readPool(ctx).entries, "2026-11-06", ["002086"]), "2026-11-02");
+  fs.rmSync(ctx.dataRoot, { recursive: true, force: true });
+});
+
+test("历史锚点用截至最近收盘的截面，不把这当成无前视回测", () => {
+  const launch = entry({ symbol: "002086", trade_date: "2026-10-19", name: "东方海洋" });
+  const bars = [
+    bar("2026-10-19", 10, 100, 10.1, 9.2),
+    bar("2026-10-20", 11.2, 80, 11.4, 10.4),
+    bar("2026-10-21", 10.15, 25, 10.4, 10),
+    bar("2026-10-22", 10.05, 20, 10.2, 9.95),
+    bar("2026-11-06", 10.08, 22, 10.2, 9.98),
+  ];
+  const view = analyzeSymbol([launch], { symbol: "002086", adjust: "qfq", fetched_at: "2026-11-07T08:00:00.000Z", bars, gap: null }, "2026-11-07", "16:00");
+  assert.ok(view.marks.some((m) => m.kind === "near"));
+  assert.equal(view.marks.find((m) => m.kind === "near")?.anchor_close, 10);
+  assert.equal("win_rate" in view, false);
+  assert.match(view.uncertainty, /不推断主力意图/);
 });
