@@ -302,8 +302,20 @@ export const FINANCE_SCHEDULE: ScheduleDef = {
   gateNote: "按北京时间,只在 A 股交易日运行(周末、节假日不跑);交易日历取不到时当天不运行,并在收件箱说明。",
   gate: financeGate,
   // 短线的盘中快照:每一拍看一次是否到了快照时点(09:25 / 09:35 / 10:00 / 11:30 / 14:00 / 15:00)。
-  // 动态导入:intraday.ts 反过来要用本文件的 pool / rowsOf,静态互相导入容易在加载顺序上出事
-  beat: async (b) => (await import("./shortline/intraday.ts")).intradayBeat(b),
+  // 实时洞察挂在同一拍里,自己节流;关 VA_LIVE_INSIGHT 或处在午休/休市时不额外联网。
+  // 动态导入:这两个模块反过来要用本文件的工具,静态互相导入容易在加载顺序上出事
+  beat: async (b) => {
+    const note = await (await import("./shortline/intraday.ts")).intradayBeat(b);
+    let extra: string | void;
+    try {
+      extra = await (await import("./live_insight/capture.ts")).liveInsightBeat(b);
+    } catch (e) {
+      if (b.signal.aborted) throw e;
+      extra = "实时洞察采集出错";
+    }
+    const text = [note, extra].filter((x): x is string => typeof x === "string" && x.length > 0).join("；");
+    return text || undefined;
+  },
   jobs: [
     {
       id: "shortline_premarket", label: "盘前提醒", at: "09:05", defaultEnabled: true,

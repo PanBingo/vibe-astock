@@ -9,7 +9,7 @@
  * 顺序按炒股的人每天的先后（Simon 2026-10-09 定）：先看自己的股票怎么样（首页），再复盘，再看产业资讯、做产业研究，
  * 最后才是研究工具；候选池放研究工具最后。
  * Vibe AStock 偏短线（Simon 2026-10-10 定）：复盘一组里情绪复盘排第一，点「复盘」直接进情绪复盘；
- * 首页和复盘之间加「盯盘」一组（实时动态 / 竞价与盘中），盘中先看这里；
+ * 首页和复盘之间加「盯盘」一组（实时动态 / 竞价与盘中 / 实时洞察），盘中先看这里；
  * 复盘后面接「交易日志」（一个页面，页内再分交易记录 / 风险与纪律 / 复查 / 模式卡）：复完盘对照自己的单子。
  */
 export const NAV_ICONS = [
@@ -41,6 +41,7 @@ export const NAV_SECTIONS: NavSection[] = [
   { label: "盯盘", icon: "Zap", pages: [
     { to: "/watch", label: "实时动态", icon: "Zap" },
     { to: "/watch/intraday", label: "竞价与盘中", icon: "Gavel" },
+    { to: "/watch/insight", label: "实时洞察", icon: "Activity" },
   ] },
   { label: "复盘", icon: "Flame", pages: [
     { to: "/shortline", label: "情绪复盘", icon: "Flame" },

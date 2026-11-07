@@ -14,6 +14,7 @@ test("当前页归属：本身和子路径都算它，首页只认 /，认不出
   assert.equal(navPageOf("/watch")?.page.label, "实时动态");
   assert.equal(navPageOf("/watch/intraday")?.page.label, "竞价与盘中", "盯盘的第二页不算成实时动态的子路径");
   assert.equal(navPageOf("/watch/intraday")?.section.label, "盯盘");
+  assert.equal(navPageOf("/watch/insight")?.page.label, "实时洞察", "实时洞察是盯盘里的独立一页");
   // 没接板块名单时，板块页算产业研究总览；接上后算它自己
   assert.equal(navPageOf("/sectors/humanoid")?.page.label, "产业研究");
   assert.equal(navPageOf("/sectors/humanoid", FULL)?.page.label, "人形机器人");

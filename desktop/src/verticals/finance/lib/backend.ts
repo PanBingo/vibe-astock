@@ -443,6 +443,12 @@ export const backend = {
   /** 在时点窗口里手动存一张快照(窗口外后端会说哪几个时间能存) */
   shortlineIntradayCapture: <T>() =>
     call<T>("/view/shortline_intraday", { method: "POST", body: JSON.stringify({ action: "capture" }) }),
+  /** 盯盘 · 实时洞察：读已采集的快照。date 为空看今天。 */
+  liveInsight: <T>(date: string | null, signal?: AbortSignal) =>
+    call<T>(`/view/live_insight${date ? `?date=${encodeURIComponent(date)}` : ""}`, { signal }),
+  /** 再采集一张。force 只绕过 2 分钟节流，绕不过休市和午休。 */
+  liveInsightCapture: <T>(force = false) =>
+    call<T>("/view/live_insight", { method: "POST", body: JSON.stringify({ action: "capture", force }) }),
 
   /**
    * 交易日志(个人交易数据,不进 AI):主视图一次给全(流水切成的交易、分组、风险与纪律、复查清单、模式卡、设置),

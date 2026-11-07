@@ -21,6 +21,7 @@ import { earningsBrief } from "./earnings_brief.ts";
 import { shareCard } from "./share_card.ts";
 import { holdingsAct, holdingsPerf, holdingsView } from "./holdings_view.ts";
 import "./shortline/register.ts";
+import "./live_insight/register.ts";
 import "./journal/register.ts";
 
 registerDeepTargetResolver((dataRoot) => new FinanceDeepTargetResolver(dataRoot));

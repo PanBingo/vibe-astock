@@ -39,7 +39,7 @@ export const WATCH_SOURCE = "腾讯实时行情;名单:持仓与自选(台账)�
 // ---------------------------------------------------------------- 时段
 
 export type Phase = "weekend" | "pre_open" | "auction" | "morning" | "lunch" | "afternoon" | "closing_auction" | "closed";
-const PHASE_LABELS: Record<Phase, string> = {
+export const PHASE_LABELS: Record<Phase, string> = {
   weekend: "周末休市", pre_open: "开盘前", auction: "集合竞价", morning: "上午连续竞价", lunch: "午间休市",
   afternoon: "下午连续竞价", closing_auction: "收盘集合竞价", closed: "已收盘",
 };
