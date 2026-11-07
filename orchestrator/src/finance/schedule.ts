@@ -302,8 +302,20 @@ export const FINANCE_SCHEDULE: ScheduleDef = {
   gateNote: "按北京时间,只在 A 股交易日运行(周末、节假日不跑);交易日历取不到时当天不运行,并在收件箱说明。",
   gate: financeGate,
   // 短线的盘中快照:每一拍看一次是否到了快照时点(09:25 / 09:35 / 10:00 / 11:30 / 14:00 / 15:00)。
-  // 动态导入:intraday.ts 反过来要用本文件的 pool / rowsOf,静态互相导入容易在加载顺序上出事
-  beat: async (b) => (await import("./shortline/intraday.ts")).intradayBeat(b),
+  // 实时洞察挂在同一拍里,自己节流;关 VA_LIVE_INSIGHT 或处在午休/休市时不额外联网。
+  // 动态导入:这两个模块反过来要用本文件的工具,静态互相导入容易在加载顺序上出事
+  beat: async (b) => {
+    const note = await (await import("./shortline/intraday.ts")).intradayBeat(b);
+    let extra: string | void;
+    try {
+      extra = await (await import("./live_insight/capture.ts")).liveInsightBeat(b);
+    } catch (e) {
+      if (b.signal.aborted) throw e;
+      extra = "实时洞察采集出错";
+    }
+    const text = [note, extra].filter((x): x is string => typeof x === "string" && x.length > 0).join("；");
+    return text || undefined;
+  },
   jobs: [
     {
       id: "shortline_premarket", label: "盘前提醒", at: "09:05", defaultEnabled: true,
@@ -313,8 +325,14 @@ export const FINANCE_SCHEDULE: ScheduleDef = {
     },
     {
       id: "shortline_close_fetch", label: "短线收盘取数", at: "15:35", defaultEnabled: true,
-      description: "A 股收盘后把当天定稿的每日情绪读数、昨日涨停股今日表现、涨停结构、事实表和连板天梯先取好存在本机:以后打开情绪历史、明日验证、涨停样本不用等,东财只留约一个月的数据也能一直攒下去。不推送消息。",
-      run: async (j) => (await import("./shortline/close_fetch.ts")).shortlineCloseFetch(j),
+      description: "A 股收盘后把当天定稿的每日情绪读数、昨日涨停股今日表现、涨停结构、事实表和连板天梯先取好存在本机,并把当天确认完整的涨停池写入涨停观察池(同一天重跑不重复、不删历史;空池和不完整的池不写)。不推送消息。",
+      run: async (j) => {
+        const base = await (await import("./shortline/close_fetch.ts")).shortlineCloseFetch(j);
+        let extra = "";
+        try { extra = await (await import("./limit_watch/view.ts")).limitWatchClose(j); }
+        catch (e) { if (j.signal.aborted) throw e; extra = "涨停观察池这次没写上"; }
+        return { ...base, note: [base.note, extra].filter(Boolean).join("；") };
+      },
     },
     {
       id: "close_digest", label: "收盘摘要", at: "15:40", defaultEnabled: true,

@@ -309,6 +309,7 @@ export function DailyReview() {
           <SegmentedToggle<ViewMode> label="看哪一天" value={ctx.live ? "live" : "close"} disabled={!dataReady || reviewLoading}
             onChange={switchMode} options={[{ key: "live", label: "今天 · 盘中" }, { key: "close", label: "上一个交易日 · 完整" }]} />
         )}
+        <Link to="/limit-watch" className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground">涨停观察池</Link>
         <button onClick={() => loadPage(true)} disabled={reviewLoading || !dataReady}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50" title="不用缓存,重新取这一屏">
           <RefreshCw className={cn("h-3.5 w-3.5", !dataReady && "animate-spin")} /> 刷新

@@ -21,11 +21,13 @@ export const router = createBrowserRouter([
       { path: "/watch", lazy: async () => ({ Component: (await import("@/pages/Watch")).Watch }) },
       // 竞价与盘中在侧栏里是单独一项,地址写死(不用 :tab),侧栏和首页目录都认得出它
       { path: "/watch/intraday", lazy: async () => ({ Component: (await import("@/pages/Watch")).Watch }) },
+      { path: "/watch/insight", lazy: async () => ({ Component: (await import("@/pages/Watch")).Watch }) },
       { path: "/shortline", lazy: async () => ({ Component: (await import("@/pages/Shortline")).Shortline }) },
       { path: "/shortline/:tab", lazy: async () => ({ Component: (await import("@/pages/Shortline")).Shortline }) },
       { path: "/journal", lazy: async () => ({ Component: (await import("@/pages/Journal")).Journal }) },
       { path: "/journal/:tab", lazy: async () => ({ Component: (await import("@/pages/Journal")).Journal }) },
       { path: "/daily-review", lazy: async () => ({ Component: (await import("@/pages/DailyReview")).DailyReview }) },
+      { path: "/limit-watch", lazy: async () => ({ Component: (await import("@/pages/LimitWatch")).LimitWatch }) },
       { path: "/intel", lazy: async () => ({ Component: (await import("@/pages/Intel")).Intel }) },
       { path: "/intel/:tab", lazy: async () => ({ Component: (await import("@/pages/Intel")).Intel }) },
       { path: "/signals", lazy: async () => ({ Component: (await import("@/pages/Signals")).Signals }) },

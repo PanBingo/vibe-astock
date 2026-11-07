@@ -193,3 +193,12 @@ Python 用安装时建的虚拟环境；mypy 的安装与约定见 [`docs/develo
 - README 不放求职内容;A 股项目的公开材料不提知识星球等付费社群。
 - Star 数属于实时数据:写 README、封面或社交资料前必须重新查询 GitHub;可以展示稳定的整数档(如 `2,200+ Stars`),
   不得把旧快照写成当前精确值。
+
+## 7. 本 fork 的实时洞察与上游
+
+GitHub 元数据里的上游是 `simonlin1212/vibe-astock`(默认分支 `main`)。`origin` 是使用者的 fork。
+实时洞察在 `orchestrator/src/finance/live_insight/` 和盯盘页 `/watch/insight`,用 `VA_LIVE_INSIGHT=0` 关掉。
+涨停观察池在 `orchestrator/src/finance/limit_watch/` 和 `/limit-watch`,收盘任务入池,用 `VA_LIMIT_WATCH=0` 关掉写入。打开页面不写。
+不要把它并进复盘口径,也不要在同步时整段退回上游。同步步骤见 [`docs/fork-sync.md`](docs/fork-sync.md):
+从 fork 的 `main` 建 `sync/upstream-*`,`merge upstream/main`,解冲突,跑测试,PR 回 fork 的 `main`。
+不要 `reset` 到上游,不要强推 `main`,不要开定时自动合并。`scripts/sync-upstream.mjs` 只在手动运行时建 PR。
